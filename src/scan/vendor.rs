@@ -98,15 +98,83 @@ const BRANDS: &[(&str, &str)] = &[
 
 /// Trailing corporate words dropped one at a time (after punctuation removal).
 const SUFFIXES: &[&str] = &[
-    "inc", "corp", "corporation", "corporate", "co", "ltd", "limited", "llc", "gmbh", "sa", "ag", "bv", "nv", "oy",
-    "ab", "as", "plc", "pte", "pty", "sas", "srl", "spa", "kg", "kk", "lp", "company", "holdings", "group",
-    "technologies", "technology", "tech", "systems", "system", "electronics", "electronic", "electric",
-    "international", "intl", "communication", "communications", "industries", "industrial", "manufacturing",
-    "semiconductor", "computer", "networks", "network", "devices", "digital", "mobile", "wireless", "telecom",
-    "broadband", "multimedia", "intelligent", "products", "enterprise", "enterprises", "trading", "of",
+    "inc",
+    "corp",
+    "corporation",
+    "corporate",
+    "co",
+    "ltd",
+    "limited",
+    "llc",
+    "gmbh",
+    "sa",
+    "ag",
+    "bv",
+    "nv",
+    "oy",
+    "ab",
+    "as",
+    "plc",
+    "pte",
+    "pty",
+    "sas",
+    "srl",
+    "spa",
+    "kg",
+    "kk",
+    "lp",
+    "company",
+    "holdings",
+    "group",
+    "technologies",
+    "technology",
+    "tech",
+    "systems",
+    "system",
+    "electronics",
+    "electronic",
+    "electric",
+    "international",
+    "intl",
+    "communication",
+    "communications",
+    "industries",
+    "industrial",
+    "manufacturing",
+    "semiconductor",
+    "computer",
+    "networks",
+    "network",
+    "devices",
+    "digital",
+    "mobile",
+    "wireless",
+    "telecom",
+    "broadband",
+    "multimedia",
+    "intelligent",
+    "products",
+    "enterprise",
+    "enterprises",
+    "trading",
+    "of",
 ];
 
-const PREFIXES: &[&str] = &["shenzhen", "beijing", "guangdong", "hangzhou", "shanghai", "dongguan", "zhejiang", "xiamen", "sichuan", "chengdu", "nanjing", "hong", "kong"];
+const PREFIXES: &[&str] = &[
+    "shenzhen",
+    "beijing",
+    "guangdong",
+    "hangzhou",
+    "shanghai",
+    "dongguan",
+    "zhejiang",
+    "xiamen",
+    "sichuan",
+    "chengdu",
+    "nanjing",
+    "hong",
+    "kong",
+];
 
 fn clean_words(raw: &str) -> Vec<String> {
     raw.replace(['.', ',', '，'], " ")
@@ -122,9 +190,17 @@ pub fn pretty_vendor(raw: &str) -> String {
     if words.is_empty() {
         return String::new();
     }
-    let lower = words.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(" ");
+    let lower = words
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
     for (needle, brand) in BRANDS {
-        if lower == *needle || lower.strip_prefix(needle).is_some_and(|r| r.starts_with(' ')) {
+        if lower == *needle
+            || lower
+                .strip_prefix(needle)
+                .is_some_and(|r| r.starts_with(' '))
+        {
             return (*brand).to_string();
         }
     }
@@ -137,9 +213,17 @@ pub fn pretty_vendor(raw: &str) -> String {
         words.pop();
     }
     // A brand rule may now match the trimmed name (e.g. after dropping "Shenzhen").
-    let lower = words.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join(" ");
+    let lower = words
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
     for (needle, brand) in BRANDS {
-        if lower == *needle || lower.strip_prefix(needle).is_some_and(|r| r.starts_with(' ')) {
+        if lower == *needle
+            || lower
+                .strip_prefix(needle)
+                .is_some_and(|r| r.starts_with(' '))
+        {
             return (*brand).to_string();
         }
     }
@@ -151,7 +235,10 @@ fn title(w: &str) -> String {
     let letters = w.chars().filter(|c| c.is_alphabetic()).count();
     if letters > 4 && w.chars().all(|c| !c.is_lowercase()) {
         let mut cs = w.chars();
-        let first = cs.next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+        let first = cs
+            .next()
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default();
         format!("{first}{}", cs.as_str().to_lowercase())
     } else {
         w.to_string()

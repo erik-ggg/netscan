@@ -10,7 +10,10 @@ pub async fn lookup(ip: Ipv4Addr) -> Option<String> {
     let t = spawn_blocking(move || dns_lookup::lookup_addr(&IpAddr::V4(ip)).ok());
     let name = timeout(Duration::from_millis(1500), t).await.ok()?.ok()??;
     let name = name.trim_end_matches('.');
-    let name = name.strip_suffix(".local").or_else(|| name.strip_suffix(".lan")).unwrap_or(name);
+    let name = name
+        .strip_suffix(".local")
+        .or_else(|| name.strip_suffix(".lan"))
+        .unwrap_or(name);
     (!name.is_empty() && name.parse::<IpAddr>().is_err() && !name.starts_with(&ip.to_string()))
         .then(|| name.to_string())
 }

@@ -7,16 +7,27 @@ use std::process::Command;
 const MAX_SCAN_PREFIX: u8 = 24;
 
 pub fn mask_from_prefix(prefix: u8) -> u32 {
-    if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) }
+    if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix as u32)
+    }
 }
 
 pub fn fmt_mac(bytes: [u8; 6]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 pub fn detect() -> Result<NetworkInfo> {
     let iface = netdev::get_default_interface().map_err(|e| anyhow!("default interface: {e}"))?;
-    let v4 = iface.ipv4.first().context("default interface has no IPv4 address")?;
+    let v4 = iface
+        .ipv4
+        .first()
+        .context("default interface has no IPv4 address")?;
     let local_ip = v4.addr();
     let prefix = v4.prefix_len();
     let gw = iface.gateway.as_ref();
@@ -30,15 +41,21 @@ pub fn detect() -> Result<NetworkInfo> {
         prefix,
         iface.mac_addr.map(|m| fmt_mac(m.octets())),
         gateway_ip,
-        gw.map(|g| fmt_mac(g.mac_addr.octets())).filter(|m| m != "00:00:00:00:00:00"),
+        gw.map(|g| fmt_mac(g.mac_addr.octets()))
+            .filter(|m| m != "00:00:00:00:00:00"),
     ))
 }
 
 fn gateway_from_route() -> Option<Ipv4Addr> {
-    let out = Command::new("route").args(["-n", "get", "default"]).output().ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("gateway:").and_then(|v| v.trim().parse().ok()))
+    let out = Command::new("route")
+        .args(["-n", "get", "default"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("gateway:")
+            .and_then(|v| v.trim().parse().ok())
+    })
 }
 
 fn build(
@@ -65,18 +82,28 @@ fn build(
 
 /// All usable host addresses of the (capped) scan subnet.
 pub fn scan_hosts(info: &NetworkInfo) -> Vec<Ipv4Addr> {
-    let Some((base, p)) = info.subnet_cidr.split_once('/') else { return vec![] };
-    let (Ok(base), Ok(p)) = (base.parse::<Ipv4Addr>(), p.parse::<u8>()) else { return vec![] };
+    let Some((base, p)) = info.subnet_cidr.split_once('/') else {
+        return vec![];
+    };
+    let (Ok(base), Ok(p)) = (base.parse::<Ipv4Addr>(), p.parse::<u8>()) else {
+        return vec![];
+    };
     let base = u32::from(base);
     let size = 1u64 << (32 - p as u32);
     if size < 4 {
         return vec![];
     }
-    (1..size as u32 - 1).map(|i| Ipv4Addr::from(base + i)).collect()
+    (1..size as u32 - 1)
+        .map(|i| Ipv4Addr::from(base + i))
+        .collect()
 }
 
 pub fn in_subnet(info: &NetworkInfo, ip: Ipv4Addr) -> bool {
-    let Some((base, p)) = info.subnet_cidr.split_once('/') else { return false };
-    let (Ok(base), Ok(p)) = (base.parse::<Ipv4Addr>(), p.parse::<u8>()) else { return false };
+    let Some((base, p)) = info.subnet_cidr.split_once('/') else {
+        return false;
+    };
+    let (Ok(base), Ok(p)) = (base.parse::<Ipv4Addr>(), p.parse::<u8>()) else {
+        return false;
+    };
     u32::from(ip) & mask_from_prefix(p) == u32::from(base)
 }

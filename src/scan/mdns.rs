@@ -9,15 +9,46 @@ use tokio::time::timeout;
 
 const META: &str = "_services._dns-sd._udp.local.";
 const TYPES: &[&str] = &[
-    "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_hap._tcp", "_homekit._tcp", "_ipp._tcp",
-    "_ipps._tcp", "_printer._tcp", "_pdl-datastream._tcp", "_companion-link._tcp",
-    "_device-info._tcp", "_spotify-connect._tcp", "_sonos._tcp", "_smb._tcp", "_afpovertcp._tcp",
-    "_ssh._tcp", "_sftp-ssh._tcp", "_rdlink._tcp", "_workstation._tcp", "_http._tcp",
-    "_amzn-wplay._tcp", "_matter._tcp", "_matterc._udp", "_meshcop._udp", "_hue._tcp",
-    "_androidtvremote2._tcp", "_nvstream._tcp", "_mqtt._tcp",
+    "_airplay._tcp",
+    "_raop._tcp",
+    "_googlecast._tcp",
+    "_hap._tcp",
+    "_homekit._tcp",
+    "_ipp._tcp",
+    "_ipps._tcp",
+    "_printer._tcp",
+    "_pdl-datastream._tcp",
+    "_companion-link._tcp",
+    "_device-info._tcp",
+    "_spotify-connect._tcp",
+    "_sonos._tcp",
+    "_smb._tcp",
+    "_afpovertcp._tcp",
+    "_ssh._tcp",
+    "_sftp-ssh._tcp",
+    "_rdlink._tcp",
+    "_workstation._tcp",
+    "_http._tcp",
+    "_amzn-wplay._tcp",
+    "_matter._tcp",
+    "_matterc._udp",
+    "_meshcop._udp",
+    "_hue._tcp",
+    "_androidtvremote2._tcp",
+    "_nvstream._tcp",
+    "_mqtt._tcp",
 ];
 /// Types whose instance name is usually the user-facing device name, best first.
-const NAME_TYPES: &[&str] = &["_companion-link", "_airplay", "_raop", "_googlecast", "_sonos", "_hap", "_ipp", "_printer"];
+const NAME_TYPES: &[&str] = &[
+    "_companion-link",
+    "_airplay",
+    "_raop",
+    "_googlecast",
+    "_sonos",
+    "_hap",
+    "_ipp",
+    "_printer",
+];
 
 #[derive(Debug, Default, Clone)]
 pub struct Found {
@@ -28,13 +59,17 @@ pub struct Found {
 }
 
 fn short_type(ty: &str) -> String {
-    ty.trim_end_matches('.').trim_end_matches(".local").to_string()
+    ty.trim_end_matches('.')
+        .trim_end_matches(".local")
+        .to_string()
 }
 
 /// Browse for `dur` and return what was found per IPv4 address.
 pub async fn discover(dur: Duration) -> BTreeMap<Ipv4Addr, Found> {
     let out: Arc<Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>> = Default::default();
-    let Ok(daemon) = ServiceDaemon::new() else { return BTreeMap::new() };
+    let Ok(daemon) = ServiceDaemon::new() else {
+        return BTreeMap::new();
+    };
     let known: Arc<Mutex<BTreeSet<String>>> = Default::default();
 
     let mut tasks = Vec::new();
@@ -79,19 +114,36 @@ pub async fn discover(dur: Duration) -> BTreeMap<Ipv4Addr, Found> {
 }
 
 fn record(out: &Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>, ev: ServiceEvent) {
-    let ServiceEvent::ServiceResolved(info) = ev else { return };
+    let ServiceEvent::ServiceResolved(info) = ev else {
+        return;
+    };
     let ty = short_type(&info.ty_domain);
     let instance = info
         .fullname
         .strip_suffix(&format!(".{}", info.ty_domain))
         .unwrap_or(&info.fullname)
         .to_string();
-    let host = info.host.trim_end_matches('.').trim_end_matches(".local").to_string();
-    let prop = |k: &str| info.txt_properties.get_property_val_str(k).filter(|v| !v.is_empty()).map(String::from);
-    let model = prop("model").or_else(|| prop("md")).or_else(|| prop("am")).or_else(|| prop("rpMd"));
+    let host = info
+        .host
+        .trim_end_matches('.')
+        .trim_end_matches(".local")
+        .to_string();
+    let prop = |k: &str| {
+        info.txt_properties
+            .get_property_val_str(k)
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+    };
+    let model = prop("model")
+        .or_else(|| prop("md"))
+        .or_else(|| prop("am"))
+        .or_else(|| prop("rpMd"));
     // Cast devices expose their user-facing name in TXT `fn`.
     let name = prop("fn").unwrap_or(instance);
-    let prio = NAME_TYPES.iter().position(|t| ty.starts_with(&format!("{t}."))).unwrap_or(NAME_TYPES.len());
+    let prio = NAME_TYPES
+        .iter()
+        .position(|t| ty.starts_with(&format!("{t}.")))
+        .unwrap_or(NAME_TYPES.len());
     let good_name = !name.contains('[') && !name.is_empty();
 
     let mut m = out.lock().unwrap();
@@ -99,14 +151,17 @@ fn record(out: &Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>, ev: ServiceEvent) {
         std::net::IpAddr::V4(v) if !v.is_link_local() => Some(v),
         _ => None,
     }) {
-        let (f, best) = m.entry(ip).or_insert_with(|| (Found::default(), usize::MAX));
+        let (f, best) = m
+            .entry(ip)
+            .or_insert_with(|| (Found::default(), usize::MAX));
         f.services.insert(ty.clone());
         f.host.get_or_insert_with(|| host.clone());
         if good_name && prio < *best {
             *best = prio;
             f.name = Some(name.clone());
         }
-        if f.model.is_none() || ty.starts_with("_device-info") || ty.starts_with("_companion-link") {
+        if f.model.is_none() || ty.starts_with("_device-info") || ty.starts_with("_companion-link")
+        {
             f.model = model.clone().or(f.model.take());
         }
     }

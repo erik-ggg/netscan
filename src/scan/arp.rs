@@ -26,9 +26,14 @@ pub fn parse(output: &str, interface: &str) -> HashMap<Ipv4Addr, String> {
         }
         let toks: Vec<&str> = line.split_whitespace().collect();
         let (Some(ip), Some(at), Some(on)) = (
-            toks.get(1).and_then(|t| t.trim_matches(['(', ')']).parse::<Ipv4Addr>().ok()),
-            toks.iter().position(|t| *t == "at").and_then(|i| toks.get(i + 1)),
-            toks.iter().position(|t| *t == "on").and_then(|i| toks.get(i + 1)),
+            toks.get(1)
+                .and_then(|t| t.trim_matches(['(', ')']).parse::<Ipv4Addr>().ok()),
+            toks.iter()
+                .position(|t| *t == "at")
+                .and_then(|i| toks.get(i + 1)),
+            toks.iter()
+                .position(|t| *t == "on")
+                .and_then(|i| toks.get(i + 1)),
         ) else {
             continue;
         };
@@ -50,7 +55,10 @@ pub fn normalize_mac(s: &str) -> Option<String> {
     if parts.len() != 6 {
         return None;
     }
-    let bytes: Option<Vec<u8>> = parts.iter().map(|p| u8::from_str_radix(p, 16).ok()).collect();
+    let bytes: Option<Vec<u8>> = parts
+        .iter()
+        .map(|p| u8::from_str_radix(p, 16).ok())
+        .collect();
     Some(super::net::fmt_mac(bytes?.try_into().ok()?))
 }
 

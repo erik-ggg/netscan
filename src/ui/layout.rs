@@ -83,7 +83,10 @@ pub fn layout(devices: &[Device]) -> Vec<Placed> {
     }
     let (rings, pattern, _) = config(n);
 
-    let groups = 1 + idxs.windows(2).filter(|w| devices[w[0]].kind != devices[w[1]].kind).count();
+    let groups = 1 + idxs
+        .windows(2)
+        .filter(|w| devices[w[0]].kind != devices[w[1]].kind)
+        .count();
     let gap = 0.4;
     let units = n as f64 + gap * (groups as f64 - 1.0);
     let full = 360.0 - 2.0 * 30.0;
@@ -100,7 +103,11 @@ pub fn layout(devices: &[Device]) -> Vec<Placed> {
         let a = (start + (pos + 0.5) * unit_deg).to_radians();
         pos += 1.0;
         let (rx, ry) = rings[pattern[k % pattern.len()]];
-        out.push(Placed { idx: i, x: CX + rx * a.sin(), y: CY - ry * a.cos() });
+        out.push(Placed {
+            idx: i,
+            x: CX + rx * a.sin(),
+            y: CY - ry * a.cos(),
+        });
     }
     out
 }
@@ -112,36 +119,44 @@ mod tests {
     fn dev(i: usize, kind: DeviceKind) -> Device {
         Device {
             ip: format!("192.168.1.{}", i + 2),
-            mac: None,
-            is_self: false,
             is_gateway: i == 0,
-            hostname: None,
-            vendor: None,
-            model: None,
-            services: vec![],
             kind: if i == 0 { DeviceKind::Router } else { kind },
-            mac_randomized: false,
+            ..Default::default()
         }
     }
 
     /// Node (+-31) and label (+-65 wide, 38..68 below) boxes, scaled by `sc`.
     fn boxes(p: &Placed, sc: f64) -> [(f64, f64, f64, f64); 2] {
         [
-            (p.x - 31.0 * sc, p.y - 31.0 * sc, p.x + 31.0 * sc, p.y + 31.0 * sc),
-            (p.x - 65.0 * sc, p.y + 38.0 * sc, p.x + 65.0 * sc, p.y + 68.0 * sc),
+            (
+                p.x - 31.0 * sc,
+                p.y - 31.0 * sc,
+                p.x + 31.0 * sc,
+                p.y + 31.0 * sc,
+            ),
+            (
+                p.x - 65.0 * sc,
+                p.y + 38.0 * sc,
+                p.x + 65.0 * sc,
+                p.y + 68.0 * sc,
+            ),
         ]
     }
 
     fn collide(a: &Placed, b: &Placed, sc: f64) -> bool {
         boxes(a, sc).iter().any(|r| {
-            boxes(b, sc).iter().any(|q| r.0 < q.2 && q.0 < r.2 && r.1 < q.3 && q.1 < r.3)
+            boxes(b, sc)
+                .iter()
+                .any(|q| r.0 < q.2 && q.0 < r.2 && r.1 < q.3 && q.1 < r.3)
         })
     }
 
     #[test]
     fn no_overlap_for_1_to_40() {
         use DeviceKind::*;
-        let kinds = [Mobile, Iot, Unknown, Computer, Tv, Car, Printer, Console, Media, Tablet];
+        let kinds = [
+            Mobile, Iot, Unknown, Computer, Tv, Car, Printer, Console, Media, Tablet,
+        ];
         for n in 1..=40 {
             let devs: Vec<Device> = (0..=n).map(|i| dev(i, kinds[i % 10])).collect();
             let p = layout(&devs);

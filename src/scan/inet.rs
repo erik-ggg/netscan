@@ -16,11 +16,21 @@ struct IpInfo {
 }
 
 pub async fn fetch() -> Internet {
-    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(3)).build() else {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    else {
         return Internet::default();
     };
     let info = async {
-        client.get("https://ipinfo.io/json").send().await.ok()?.json::<IpInfo>().await.ok()
+        client
+            .get("https://ipinfo.io/json")
+            .send()
+            .await
+            .ok()?
+            .json::<IpInfo>()
+            .await
+            .ok()
     };
     let plain = async {
         for url in ["https://api.ipify.org", "https://ifconfig.me/ip"] {
@@ -42,5 +52,8 @@ pub async fn fetch() -> Internet {
         };
         super::vendor::pretty_vendor(name)
     });
-    Internet { public_ip: ip.or(info.and_then(|i| i.ip)), isp }
+    Internet {
+        public_ip: ip.or(info.and_then(|i| i.ip)),
+        isp,
+    }
 }
