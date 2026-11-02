@@ -5,10 +5,12 @@ pub mod dossier;
 pub mod icons;
 pub mod intrusion;
 pub mod layout;
+pub mod link;
 pub mod loading;
 pub mod network_map;
 pub mod session;
 pub mod sfx;
+pub mod xterm;
 
 use std::sync::OnceLock;
 
@@ -16,7 +18,7 @@ const MAIN_CSS: &str = include_str!("../../assets/main.css");
 const RAJDHANI: &[u8] = include_bytes!("../../assets/fonts/Rajdhani-SemiBold.ttf");
 const SHARE_MONO: &[u8] = include_bytes!("../../assets/fonts/ShareTechMono-Regular.ttf");
 
-fn base64(data: &[u8]) -> String {
+pub(crate) fn base64(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for c in data.chunks(3) {
@@ -45,10 +47,11 @@ pub fn css() -> &'static str {
     CSS.get_or_init(|| {
         format!(
             "@font-face{{font-family:'Rajdhani';font-weight:600;src:url(data:font/ttf;base64,{}) format('truetype');}}\
-             @font-face{{font-family:'Share Tech Mono';src:url(data:font/ttf;base64,{}) format('truetype');}}\n{}",
+             @font-face{{font-family:'Share Tech Mono';src:url(data:font/ttf;base64,{}) format('truetype');}}\n{}\n{}",
             base64(RAJDHANI),
             base64(SHARE_MONO),
-            MAIN_CSS
+            MAIN_CSS,
+            xterm::XTERM_CSS
         )
     })
 }
@@ -140,9 +143,14 @@ mod preview {
     }
 
     fn page(body: String) -> String {
+        page_x(body, "")
+    }
+
+    fn page_x(body: String, extra: &str) -> String {
         format!(
-            "<!doctype html><html><head><meta charset=utf-8><style>{}</style><style>.map-screen,.node-body,.loading,.log-line,.readout,.dz-wrap,.dossier,.dz-sec,.c,.ret-in,.reclass,.ix-p,.ix-top,.ix-bar,.cs-col,.cs-band,.tl,.stamp,.stamp-wrap,.ice-ring,.tw,.dz-top,.dz-id{{animation:none!important;opacity:1!important;filter:none!important}}.st-main::before,.st-main::after,.ice-arc,.ice-spin{{animation:none!important}}.burst,.ix-sweep{{display:none!important}}</style></head><body><div id=main><div class=app><div class=bg-grid></div>{body}<div class=scanlines></div><div class=vignette></div></div></div></body></html>",
-            super::css()
+            "<!doctype html><html><head><meta charset=utf-8><style>{}</style><style>.map-screen,.node-body,.loading,.log-line,.readout,.dz-wrap,.dossier,.dz-sec,.c,.ret-in,.reclass,.ix-p,.ix-top,.ix-bar,.cs-col,.cs-band,.tl,.stamp,.stamp-wrap,.ice-ring,.tw,.dz-top,.dz-id,.nl,.nl-wrap,.lc,.nl-modal,.nl-modal-wrap,.nl-chip,.nl-pip,.nl-pip .bx,.dz-chip .dot,.nl-mock .cur,.hs-line,.hs-pk,.nl-term{{animation:none!important;opacity:1!important;filter:none!important}}.nl-hs{{display:none!important}}.nl-term{{background:#060405}}.st-main::before,.st-main::after,.ice-arc,.ice-spin{{animation:none!important}}.burst,.ix-sweep{{display:none!important}}</style><style>{}</style></head><body><div id=main><div class=app><div class=bg-grid></div>{body}<div class=scanlines></div><div class=vignette></div></div></div></body></html>",
+            super::css(),
+            extra
         )
     }
 
@@ -206,7 +214,7 @@ mod preview {
                 rsx! {
                     NetworkMap { result: r, hovered: use_signal(|| None::<usize>), focus, intel: use_signal(move || sessions.clone()), on_target: |_| {} }
                     if let Some((device, session)) = d {
-                        Dossier { device, session, closing: false, on_close: |_| {}, on_rescan: |_| {} }
+                        Dossier { device, session, closing: false, on_close: |_| {}, on_rescan: |_| {}, network: NetworkInfo { interface: "en0".into(), local_ip: "192.168.1.23".into(), local_mac: None, prefix: 24, netmask: "255.255.255.0".into(), gateway_ip: Some("192.168.1.1".into()), gateway_mac: None, subnet_cidr: "192.168.1.0/24".into() }, tools: crate::link::tools::Tools::default(), cfg_open: false, on_cfg: |_| {}, on_connect: |_| {}, on_recheck: |_| {} }
                     }
                 }
             },
@@ -395,14 +403,301 @@ mod preview {
         );
     }
 
+    /// Fixture LG TV with a full evidence trail, shown in the dossier.
+    #[test]
+    fn dump_class_preview() {
+        let Ok(dir) = std::env::var("PREVIEW_DIR") else {
+            return;
+        };
+        let ev = |kind, weight, source, text: &str| Evidence {
+            kind,
+            weight,
+            source,
+            text: text.into(),
+        };
+        let class = Classification {
+            kind: DeviceKind::Tv,
+            confidence: 92,
+            label: Some("WEBOS TV".into()),
+            reason: "MODEL 55NANO796NE \u{25B8} LG TV LINE".into(),
+            evidence: vec![
+                ev(
+                    DeviceKind::Tv,
+                    87,
+                    EvSource::Model,
+                    "MODEL 55NANO796NE \u{25B8} LG TV LINE",
+                ),
+                ev(
+                    DeviceKind::Tv,
+                    70,
+                    EvSource::Name,
+                    "NAME \"LG WEBOS TV 2272\" \u{25B8} WEBOS TV",
+                ),
+                ev(
+                    DeviceKind::Tv,
+                    60,
+                    EvSource::Mdns,
+                    "MDNS _DISPLAY \u{25B8} DISPLAY SINK",
+                ),
+                ev(
+                    DeviceKind::Tv,
+                    55,
+                    EvSource::Probe,
+                    "PROBE :3000 \u{25B8} WEBOS REMOTE API",
+                ),
+                ev(
+                    DeviceKind::Tv,
+                    40,
+                    EvSource::Vendor,
+                    "VENDOR LG ELECTRONICS \u{25B8} TV/APPLIANCE",
+                ),
+                ev(
+                    DeviceKind::Media,
+                    30,
+                    EvSource::Mdns,
+                    "MDNS _AIRPLAY \u{25B8} AIRPLAY TARGET",
+                ),
+                ev(
+                    DeviceKind::Iot,
+                    25,
+                    EvSource::Mdns,
+                    "MDNS _HAP \u{25B8} HOMEKIT ACCESSORY",
+                ),
+            ],
+            alt: vec![(DeviceKind::Media, 30), (DeviceKind::Iot, 25)],
+        };
+        let tv = Device {
+            ip: "192.168.1.32".into(),
+            mac: Some("A8:23:FE:12:34:56".into()),
+            hostname: Some("LG webOS TV 2272".into()),
+            vendor: Some("LG Electronics".into()),
+            model: Some("55NANO796NE".into()),
+            services: vec![
+                "_airplay._tcp".into(),
+                "_display._tcp".into(),
+                "_hap._tcp".into(),
+            ],
+            kind: DeviceKind::Tv,
+            rtt_ms: Some(6.2),
+            ttl: Some(64),
+            class: Some(class),
+            ..Default::default()
+        };
+        let mut r = fake(10);
+        r.devices.push(tv.clone());
+        // An uncertain neighbour for the "?" marker.
+        r.devices[2].class = Some(Classification {
+            kind: DeviceKind::Iot,
+            confidence: 44,
+            reason: "VENDOR BILIAN \u{25B8} WI-FI MODULE".into(),
+            evidence: vec![ev(
+                DeviceKind::Iot,
+                45,
+                EvSource::Vendor,
+                "VENDOR BILIAN \u{25B8} WI-FI MODULE",
+            )],
+            alt: vec![(DeviceKind::Tv, 15)],
+            ..Default::default()
+        });
+        r.devices[2].kind = DeviceKind::Iot;
+        let idx = r.devices.len() - 1;
+        let s = IntelSession::new(&tv.ip, 1);
+        let mut m = HashMap::new();
+        m.insert(tv.ip.clone(), s.clone());
+        std::fs::write(
+            format!("{dir}/dossier_class.html"),
+            scene(r, Some(idx), m, Some((idx, s))),
+        )
+        .unwrap();
+    }
+
+    /// Neural link: config drawer (.194 ssh, no-adb TV) and console (mock lines, purge, handshake).
+    #[test]
+    fn dump_link_preview() {
+        use crate::link::{LinkRequest, Proto, tools::Tools};
+        let Ok(dir) = std::env::var("PREVIEW_DIR") else {
+            return;
+        };
+        let ev = |kind, weight, source, text: &str| Evidence {
+            kind,
+            weight,
+            source,
+            text: text.into(),
+        };
+        let wb_class = Classification {
+            kind: DeviceKind::Car,
+            confidence: 63,
+            label: Some("EV CHARGER".into()),
+            reason: "NAME WB277129 \u{25B8} WALLBOX-STYLE NAME".into(),
+            evidence: vec![ev(
+                DeviceKind::Car,
+                70,
+                EvSource::Name,
+                "NAME WB277129 \u{25B8} WALLBOX-STYLE NAME",
+            )],
+            alt: vec![(DeviceKind::Computer, 45)],
+        };
+        let wb = Device {
+            ip: "192.168.1.194".into(),
+            mac: Some("F8:F0:05:12:34:56".into()),
+            hostname: Some("WB277129".into()),
+            vendor: Some("Newport Media".into()),
+            services: vec!["_ssh._tcp".into(), "_sftp-ssh._tcp".into()],
+            kind: DeviceKind::Car,
+            ttl: Some(64),
+            rtt_ms: Some(4.1),
+            class: Some(wb_class),
+            ..Default::default()
+        };
+        let tv_class = Classification {
+            kind: DeviceKind::Tv,
+            confidence: 88,
+            label: Some("GOOGLE TV".into()),
+            reason: "CAST MODEL TCL GOOGLE TV".into(),
+            evidence: vec![ev(
+                DeviceKind::Tv,
+                90,
+                EvSource::Probe,
+                "CAST MODEL TCL GOOGLE TV",
+            )],
+            alt: vec![],
+        };
+        let tv = Device {
+            ip: "192.168.1.47".into(),
+            mac: Some("84:D1:5A:AA:BB:CC".into()),
+            hostname: Some("Sabrina".into()),
+            vendor: Some("TCL".into()),
+            services: vec!["_googlecast._tcp".into(), "_androidtvremote2._tcp".into()],
+            kind: DeviceKind::Tv,
+            ttl: Some(64),
+            beacon: Some(Beacon {
+                open: vec![5555, 6466, 8008, 8009],
+                ..Default::default()
+            }),
+            class: Some(tv_class),
+            ..Default::default()
+        };
+        let mut r = fake(10);
+        r.devices.push(wb.clone());
+        r.devices.push(tv.clone());
+        let iw = r.devices.len() - 2;
+        let it = r.devices.len() - 1;
+        let tools_none = Tools {
+            ssh: Some("/usr/bin/ssh".into()),
+            shell: "/bin/zsh".into(),
+            ..Default::default()
+        };
+
+        let drawer = |idx: usize, tab: usize, tools: Tools| {
+            let d = r.devices[idx].clone();
+            let s = IntelSession::new(&d.ip, 1);
+            let mut m = HashMap::new();
+            m.insert(d.ip.clone(), s.clone());
+            let rr = r.clone();
+            let mut vd = VirtualDom::new_with_props(
+                move |(rr, d, s, m, tools, tab, idx): (
+                    ScanResult,
+                    Device,
+                    IntelSession,
+                    HashMap<String, IntelSession>,
+                    Tools,
+                    usize,
+                    usize,
+                )| {
+                    let n = rr.network.clone();
+                    let _ = tab;
+                    rsx! {
+                        NetworkMap { result: rr.clone(), hovered: use_signal(|| None::<usize>), focus: Some(idx), intel: use_signal(move || m.clone()), on_target: |_| {} }
+                        Dossier { device: d.clone(), session: s, closing: false, on_close: |_| {}, on_rescan: |_| {}, network: n.clone(), tools: tools.clone(), cfg_open: true, on_cfg: |_| {}, on_connect: |_| {}, on_recheck: |_| {} }
+                    }
+                },
+                (rr, d, s, m, tools, tab, idx),
+            );
+            vd.rebuild_in_place();
+            page(dioxus_ssr::render(&vd))
+        };
+        let w = |n: &str, h: String| std::fs::write(format!("{dir}/{n}.html"), h).unwrap();
+        w("link_config_ssh", drawer(iw, 0, tools_none.clone()));
+        w("link_config_noadb", drawer(it, 0, tools_none.clone()));
+
+        let lines: Vec<String> = [
+            "$ adb connect 192.168.1.47:5555 && adb -s 192.168.1.47:5555 shell",
+            "already connected to 192.168.1.47:5555",
+            "sabrina:/ $ getprop ro.product.model",
+            "55C745",
+            "sabrina:/ $ pm list packages | wc -l",
+            "214",
+            "sabrina:/ $ pm list packages | grep -i tcl",
+            "package:com.tcl.tv",
+            "package:com.tcl.ui.dsp",
+            "package:com.tcl.tvweishi",
+            "package:com.tcl.android.launcher",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let console = |purge: bool, extra: &str| {
+            let mut req = LinkRequest::new("192.168.1.47".parse().unwrap(), Proto::Adb);
+            req.adb_port = 5555;
+            let tvc = tv.clone();
+            let lines = lines.clone();
+            let mut vd = VirtualDom::new_with_props(
+                move |(tvc, req, lines, purge, idx, rr): (
+                    Device,
+                    LinkRequest,
+                    Vec<String>,
+                    bool,
+                    usize,
+                    ScanResult,
+                )| {
+                    rsx! {
+                        NetworkMap { result: rr, hovered: use_signal(|| None::<usize>), focus: Some(idx), intel: use_signal(HashMap::new), on_target: |_| {} }
+                        super::link::NeuralLink { device: tvc, req, run: 1, on_sever: |_| {}, mock: Some(lines), tools: Tools { adb: Some("/opt/homebrew/bin/adb".into()), ..Default::default() } }
+                        if purge { super::link::ConfirmPurge { ip: "192.168.1.47".to_string(), on_abort: |_| {}, on_type: |_| {}, checked: true } }
+                    }
+                },
+                (tvc, req, lines, purge, it, r.clone()),
+            );
+            vd.rebuild_in_place();
+            page_x(
+                dioxus_ssr::render(&vd).replace("class=\"app\"", "class=\"app linked\""),
+                extra,
+            )
+        };
+        w("link_console", console(false, ""));
+        w("link_purge", console(true, ""));
+        // Handshake frozen mid-flight.
+        w(
+            "link_handshake",
+            console(
+                false,
+                ".nl-hs{display:flex!important;animation:none!important;opacity:1!important}.hs-line.f{animation:none!important;stroke-dashoffset:0!important}.hs-pk{animation:none!important;opacity:1!important}.hs-pk.b{transform:translateX(120px)}.hs-pk.c{transform:translateX(230px)}",
+            ),
+        );
+    }
+
     #[test]
     fn dump_preview() {
         let Ok(dir) = std::env::var("PREVIEW_DIR") else {
             return;
         };
         if let Ok(f) = std::env::var("PREVIEW_JSON") {
-            let r: ScanResult = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
-            for (name, hov) in [("real", None), ("real_hover", Some(4usize))] {
+            let mut r: ScanResult =
+                serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
+            // Older scans predate the classifier: score them now.
+            for d in r.devices.iter_mut().filter(|d| d.class.is_none()) {
+                d.class = Some(crate::scan::classify::assess(d, None));
+            }
+            let hi = r
+                .devices
+                .iter()
+                .position(|d| {
+                    d.class
+                        .as_ref()
+                        .is_some_and(|c| c.label.is_some() && !d.is_self)
+                })
+                .unwrap_or(4);
+            for (name, hov) in [("real", None), ("real_hover", Some(hi))] {
                 let mut vd = VirtualDom::new_with_props(
                     move |r: ScanResult| rsx! { NetworkMap { result: r, hovered: use_signal(move || hov), focus: None, intel: use_signal(HashMap::new), on_target: |_| {} } },
                     r.clone(),

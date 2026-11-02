@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkInfo {
@@ -52,6 +53,87 @@ pub struct Device {
     /// UPnP descriptor gathered from SSDP + description XML.
     #[serde(default)]
     pub upnp: Option<UpnpInfo>,
+    /// Selected mDNS TXT keys (`md`, `fn`, `model`, ...).
+    #[serde(default)]
+    pub txt: BTreeMap<String, String>,
+    /// Advertised mDNS service ports, e.g. `_adb-tls-connect` -> 37151.
+    #[serde(default)]
+    pub svc_ports: BTreeMap<String, u16>,
+    /// Cheap TV/streamer probe results (filled by the beacon phase).
+    #[serde(default)]
+    pub beacon: Option<Beacon>,
+    /// Scored classification; `kind` always equals `class.kind` once set.
+    #[serde(default)]
+    pub class: Option<Classification>,
+}
+
+/// Where a piece of classification evidence came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EvSource {
+    #[default]
+    Role,
+    Model,
+    Name,
+    Mdns,
+    Upnp,
+    Probe,
+    Port,
+    Banner,
+    Vendor,
+    Ttl,
+    Mac,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Evidence {
+    pub kind: DeviceKind,
+    /// 1..=99: probability that this evidence alone is right.
+    pub weight: u8,
+    pub source: EvSource,
+    /// HUD wording, e.g. `MODEL 55NANO796NE \u{25B8} LG TV LINE`.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Classification {
+    pub kind: DeviceKind,
+    /// 0..=100.
+    pub confidence: u8,
+    /// Sub-type: `ANDROID TV`, `EV CHARGER`, `WEBOS TV`, ...
+    #[serde(default)]
+    pub label: Option<String>,
+    pub reason: String,
+    /// Winner's evidence first (descending weight), then the rest.
+    pub evidence: Vec<Evidence>,
+    /// Runner-up kinds with their probability in percent (max 2).
+    #[serde(default)]
+    pub alt: Vec<(DeviceKind, u8)>,
+}
+
+/// One identity answer from a beacon probe.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Ident {
+    /// `CAST`, `ROKU-ECP`, `SAMSUNG-API`, `PHILIPS-JS`, `DIAL`.
+    pub source: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub maker: Option<String>,
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub is_tv: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Beacon {
+    pub open: Vec<u16>,
+    #[serde(default)]
+    pub idents: Vec<Ident>,
+    #[serde(default)]
+    pub elapsed_ms: u32,
 }
 
 impl DeviceKind {
@@ -238,6 +320,9 @@ pub struct DeviceIntel {
     /// Refined kind (`None` = unchanged).
     pub kind: Option<DeviceKind>,
     pub kind_reason: Option<String>,
+    /// Full scored classification including deep-scan evidence.
+    #[serde(default)]
+    pub class: Option<Classification>,
     pub notes: Vec<Note>,
     pub exposure: Risk,
 }

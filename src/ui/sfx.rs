@@ -24,7 +24,7 @@ pub fn reduced_motion() -> bool {
     REDUCED.load(Ordering::Relaxed)
 }
 
-/// `kind`: lock, tick, granted, denied, relink, close, abort, hum_on, hum_off.
+/// `kind`: lock, tick, granted, denied, relink, link, close, abort, hum_on, hum_off.
 pub fn play(kind: &str) {
     if muted() && kind != "hum_off" {
         return;
@@ -92,6 +92,7 @@ const JS: &str = r#"
         case 'granted': osc('sawtooth', 110, 110, t, 0.4, 0.5); osc('sawtooth', 165, 165, t, 0.4, 0.35); break;
         case 'denied': osc('sawtooth', 220, 80, t, 0.5, 0.45); osc('sawtooth', 227, 84, t, 0.5, 0.45); break;
         case 'relink': osc('square', 700, 1400, t, 0.06, 0.35); osc('sawtooth', 165, 165, t + 0.07, 0.22, 0.3); break;
+        case 'link': osc('square', 400, 1600, t, 0.12, 0.4); osc('sawtooth', 82, 82, t, 0.3, 0.5); break;
         case 'close': noise(t, 0.16, 400, 'lowpass', 1.0, 0.7); break;
         case 'abort': osc('square', 600, 200, t, 0.12, 0.35); noise(t, 0.1, 500, 'lowpass', 0.6, 0.7); break;
         case 'hum_on':
@@ -113,7 +114,8 @@ const JS: &str = r#"
 pub fn install() {
     let _ = document::eval(JS);
     dioxus::prelude::spawn(async {
-        let ev = document::eval("return window.matchMedia('(prefers-reduced-motion: reduce)').matches;");
+        let ev =
+            document::eval("return window.matchMedia('(prefers-reduced-motion: reduce)').matches;");
         if let Ok(v) = ev.join::<bool>().await {
             REDUCED.store(v, Ordering::Relaxed);
         }

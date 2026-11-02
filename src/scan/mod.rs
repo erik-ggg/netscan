@@ -1,6 +1,7 @@
 //! Network scan pipeline: net -> ping -> arp -> merge.
 
 pub mod arp;
+pub mod beacon;
 pub mod classify;
 pub mod inet;
 pub mod intel;
@@ -79,6 +80,14 @@ pub async fn scan(progress: impl Fn(ScanProgress) + Send + Sync + 'static) -> Re
         network.gateway_mac = gateway_ip.and_then(|g| arp.get(&g).cloned());
     }
 
+    // BEACON: TV-port probes overlap the mDNS wait, so they add no wall time.
+    let cands = beacon::candidates(&alive, &arp, local_ip, gateway_ip);
+    let n_cands = cands.len();
+    let beacon_task = tokio::spawn(timeout(
+        Duration::from_millis(1800),
+        beacon::probe_all(cands, Duration::from_millis(1700)),
+    ));
+
     let mut ips: Vec<Ipv4Addr> = alive.keys().copied().chain(arp.keys().copied()).collect();
     ips.push(local_ip);
     ips.extend(gateway_ip);
@@ -155,7 +164,7 @@ pub async fn scan(progress: impl Fn(ScanProgress) + Send + Sync + 'static) -> Re
         }
         (hits, desc)
     };
-    let (found, rdns, inet, (ssdp_found, mut upnp)) = tokio::join!(
+    let (found, rdns, inet, (ssdp_found, mut upnp), beacons) = tokio::join!(
         async {
             mdns_task
                 .await
@@ -176,7 +185,23 @@ pub async fn scan(progress: impl Fn(ScanProgress) + Send + Sync + 'static) -> Re
                 .unwrap_or_default()
         },
         ssdp_hits,
+        async {
+            beacon_task
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default()
+        },
     );
+    let beacon::BeaconResult {
+        mut beacons,
+        upnp: mut dial_upnp,
+    } = beacons;
+    log(format!(
+        "BEACON {n_cands} HOSTS // {} TV PORTS // {} IDENTS",
+        beacons.values().map(|b| b.open.len()).sum::<usize>(),
+        beacons.values().map(|b| b.idents.len()).sum::<usize>()
+    ));
     for (ip, h) in &ssdp_found {
         if let Some(u) = upnp.get_mut(ip) {
             u.server = h.server.clone();
@@ -222,9 +247,14 @@ pub async fn scan(progress: impl Fn(ScanProgress) + Send + Sync + 'static) -> Re
         if let Some(f) = f {
             d.services = f.services.iter().cloned().collect();
             d.model = f.model.clone();
+            d.txt = f.txt.clone();
+            d.svc_ports = f.ports.clone();
         }
-        d.upnp = upnp.remove(&ip);
-        d.kind = classify::classify(d);
+        d.upnp = upnp.remove(&ip).or_else(|| dial_upnp.remove(&ip));
+        d.beacon = beacons.remove(&ip);
+        let c = classify::assess(d, None);
+        d.kind = c.kind;
+        d.class = Some(c);
     }
 
     phase("Done", 100);

@@ -1,7 +1,9 @@
 use super::intrusion::{self, Intrusion, Stamp};
 use super::{
-    css, dossier::Dossier, loading::Loading, network_map::NetworkMap, session::IntelSession, sfx,
+    css, dossier::Dossier, link::NeuralLink, loading::Loading, network_map::NetworkMap,
+    session::IntelSession, sfx,
 };
+use crate::link::{self, LinkRequest, tools::Tools};
 use crate::scan::{self, model::*};
 use dioxus::prelude::*;
 use futures::StreamExt;
@@ -40,6 +42,10 @@ pub enum Focus {
     Closing {
         idx: usize,
     },
+    /// Neural link console (modal): the map stays focused underneath.
+    Link {
+        idx: usize,
+    },
 }
 
 impl Focus {
@@ -50,7 +56,8 @@ impl Focus {
             | Focus::Breach { idx }
             | Focus::Granted { idx, .. }
             | Focus::Dossier { idx }
-            | Focus::Closing { idx } => Some(idx),
+            | Focus::Closing { idx }
+            | Focus::Link { idx } => Some(idx),
         }
     }
 }
@@ -108,6 +115,20 @@ pub fn App() -> Element {
     let mut elapsed = use_signal(|| 0u32);
     let mut relink = use_signal(|| false);
     let mut muted = use_signal(sfx::muted);
+    let mut link_cfg = use_signal(|| false);
+    let mut link_req = use_signal(|| None::<LinkRequest>);
+    let mut link_pre = use_signal(|| None::<String>);
+    let mut link_run = use_signal(|| 0u32);
+    let mut tools = use_signal(Tools::default);
+    // `detect` may block ~1 s (xcode-select probe): keep it off the UI thread.
+    let refresh_tools = move || {
+        spawn(async move {
+            if let Ok(t) = tokio::task::spawn_blocking(link::tools::detect).await {
+                tools.set(t);
+            }
+        });
+    };
+    use_hook(refresh_tools);
 
     // Breach hum follows focus: on while in Breach, off on any other state.
     use_effect(move || {
@@ -261,10 +282,29 @@ pub fn App() -> Element {
         });
     };
 
+    let engage = move |(req, pre): (LinkRequest, Option<String>)| {
+        let cur = *focus.peek();
+        let Focus::Dossier { idx } = cur else {
+            return;
+        };
+        link_req.set(Some(req));
+        link_pre.set(pre);
+        link_run += 1;
+        link_cfg.set(false);
+        sfx::play("link");
+        focus.set(Focus::Link { idx });
+    };
+
     let mut close = move || {
         let cur = *focus.peek();
+        let cfg = *link_cfg.peek();
+        if cfg && matches!(cur, Focus::Dossier { .. }) {
+            link_cfg.set(false); // ESC closes the drawer first
+            return;
+        }
         match cur {
             Focus::Dossier { idx } => {
+                link_cfg.set(false);
                 focus.set(Focus::Closing { idx });
                 sfx::play("close");
                 spawn(async move {
@@ -278,24 +318,37 @@ pub fn App() -> Element {
                 sfx::play("abort");
                 focus.set(Focus::None)
             }
-            _ => {}
+            _ => {} // Closing / Link: the console owns ESC (it goes to the terminal)
         }
     };
 
     let st = stage();
+    let linked = matches!(focus(), Focus::Link { .. });
     rsx! {
         style { "{css()}" }
-        div { class: "app", tabindex: "-1",
+        div { class: if linked { "app linked" } else { "app" }, tabindex: "-1",
             onmounted: move |e| async move { let _ = e.set_focus(true).await; },
-            onkeydown: move |e| match e.key() {
+            onkeydown: move |e| {
+                // Keys typed in the terminal must never trigger app actions.
+                let cur = *focus.peek();
+                if matches!(cur, Focus::Link { .. }) {
+                    return;
+                }
+                let cfg = *link_cfg.peek();
+                match e.key() {
                 Key::Escape => close(),
                 Key::Character(c) if c.eq_ignore_ascii_case("m") => {
                     muted.set(sfx::toggle_mute());
                 }
-                Key::Character(c) if c.eq_ignore_ascii_case("r") => {
+                Key::Character(c) if c.eq_ignore_ascii_case("c") => {
+                    let cmd = e.modifiers().intersects(Modifiers::META | Modifiers::CONTROL);
+                    if !cmd && matches!(cur, Focus::Dossier { .. }) {
+                        link_cfg.set(!cfg);
+                    }
+                }
+                Key::Character(c) if c.eq_ignore_ascii_case("r") && !cfg => {
                     // Copy out first: an `if let` keeps the peek guard alive for the whole
                     // body, and `begin_breach` writes `focus` -> AlreadyBorrowed panic.
-                    let cur = *focus.peek();
                     if let Focus::Dossier { idx } = cur {
                         let done = result.peek().as_ref().and_then(|r| r.devices.get(idx)).and_then(|d| sessions.peek().get(&d.ip).map(|s| s.done));
                         if done == Some(true) {
@@ -305,6 +358,7 @@ pub fn App() -> Element {
                     }
                 }
                 _ => {}
+                }
             },
             div { class: "bg-grid" }
             match st {
@@ -358,7 +412,38 @@ pub fn App() -> Element {
                                             start_scan(idx);
                                             begin_breach(idx);
                                         },
+                                        network: r.network.clone(),
+                                        tools: tools(),
+                                        cfg_open: link_cfg(),
+                                        on_cfg: move |open: bool| link_cfg.set(open),
+                                        on_connect: engage,
+                                        on_recheck: move |_| refresh_tools(),
                                     }
+                                }
+                            }
+                        }
+                        if let Focus::Link { idx } = focus() {
+                            if let (Some(d), Some(req)) = (r.devices.get(idx).cloned(), link_req()) {
+                                NeuralLink {
+                                    key: "{link_run()}",
+                                    device: d,
+                                    req,
+                                    run: link_run(),
+                                    tools: tools(),
+                                    pretype: link_pre(),
+                                    on_reengage: move |_| {
+                                        link_pre.set(None);
+                                        link_run += 1;
+                                    },
+                                    on_sever: move |_| {
+                                        let cur = *focus.peek();
+                                        if let Focus::Link { idx } = cur {
+                                            focus.set(Focus::Dossier { idx });
+                                        }
+                                        link_req.set(None);
+                                        // The console owned the keyboard focus: give it back to the app.
+                                        let _ = document::eval("var a=document.querySelector('.app');if(a)a.focus();");
+                                    },
                                 }
                             }
                         }

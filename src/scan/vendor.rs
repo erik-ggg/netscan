@@ -94,6 +94,11 @@ const BRANDS: &[(&str, &str)] = &[
     ("linksys", "Linksys"),
     ("mikrotik", "MikroTik"),
     ("hui zhou gaoshengda", "Gaoshengda"),
+    ("tp vision", "TP Vision"),
+    ("vestel", "Vestel"),
+    ("skyworth", "Skyworth"),
+    ("changhong", "Changhong"),
+    ("newport media", "Newport Media"),
 ];
 
 /// Trailing corporate words dropped one at a time (after punctuation removal).

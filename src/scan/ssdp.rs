@@ -85,6 +85,20 @@ pub async fn discover(dur: Duration) -> BTreeMap<Ipv4Addr, SsdpHit> {
     out
 }
 
+/// Send one unicast M-SEARCH for `st` to `ip:1900` from `sock` (replies are read by the caller).
+pub async fn unicast_search(
+    sock: &UdpSocket,
+    ip: Ipv4Addr,
+    st: &str,
+    mx: u8,
+) -> std::io::Result<usize> {
+    let msg = format!(
+        "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: {mx}\r\nST: {st}\r\n\r\n"
+    );
+    sock.send_to(msg.as_bytes(), SocketAddr::new(IpAddr::V4(ip), 1900))
+        .await
+}
+
 /// Host part of an `http://host[:port]/path` URL.
 fn location_host(loc: &str) -> Option<&str> {
     let rest = loc.strip_prefix("http://")?;

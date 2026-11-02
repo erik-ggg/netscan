@@ -37,6 +37,11 @@ const TYPES: &[&str] = &[
     "_androidtvremote2._tcp",
     "_nvstream._tcp",
     "_mqtt._tcp",
+    "_display._tcp",
+    "_adb-tls-connect._tcp",
+    "_adb-tls-pairing._tcp",
+    "_androidtvremote._tcp",
+    "_amzn-alexa._tcp",
 ];
 /// Types whose instance name is usually the user-facing device name, best first.
 const NAME_TYPES: &[&str] = &[
@@ -56,6 +61,42 @@ pub struct Found {
     pub name: Option<String>,
     pub host: Option<String>,
     pub model: Option<String>,
+    /// Selected TXT keys (`md`, `fn`, ...), cleaned and capped.
+    pub txt: BTreeMap<String, String>,
+    /// Service short type (`_adb-tls-connect`) -> port.
+    pub ports: BTreeMap<String, u16>,
+}
+
+/// TXT keys worth keeping.
+const TXT_KEYS: &[&str] = &[
+    "md",
+    "fn",
+    "model",
+    "am",
+    "rpMd",
+    "manufacturer",
+    "ty",
+    "usb_MDL",
+    "ca",
+];
+
+/// Pure helper: pull the interesting TXT keys through `get`, cleaned and capped at 80 chars.
+fn capture_txt(get: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
+    TXT_KEYS
+        .iter()
+        .filter_map(|k| {
+            let v = crate::scan::textutil::clean(&get(k)?);
+            let v: String = v.chars().take(80).collect();
+            (!v.is_empty()).then(|| (k.to_string(), v))
+        })
+        .collect()
+}
+
+/// Type without the `._tcp` / `._udp` transport suffix.
+fn bare_type(ty: &str) -> &str {
+    ty.strip_suffix("._tcp")
+        .or_else(|| ty.strip_suffix("._udp"))
+        .unwrap_or(ty)
 }
 
 fn short_type(ty: &str) -> String {
@@ -144,7 +185,12 @@ fn record(out: &Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>, ev: ServiceEvent) {
         .iter()
         .position(|t| ty.starts_with(&format!("{t}.")))
         .unwrap_or(NAME_TYPES.len());
-    let good_name = !name.contains('[') && !name.is_empty();
+    let good_name = !name.contains('[') && !name.is_empty() && !ty.starts_with("_adb-tls");
+    let txt = capture_txt(|k| {
+        info.txt_properties
+            .get_property_val_str(k)
+            .map(String::from)
+    });
 
     let mut m = out.lock().unwrap();
     for ip in info.addresses.iter().filter_map(|a| match a.to_ip_addr() {
@@ -155,6 +201,13 @@ fn record(out: &Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>, ev: ServiceEvent) {
             .entry(ip)
             .or_insert_with(|| (Found::default(), usize::MAX));
         f.services.insert(ty.clone());
+        f.ports.insert(bare_type(&ty).to_string(), info.port);
+        for (k, v) in &txt {
+            // Cast TXT is the most reliable source for md/fn.
+            if ty.starts_with("_googlecast") || !f.txt.contains_key(k) {
+                f.txt.insert(k.clone(), v.clone());
+            }
+        }
         f.host.get_or_insert_with(|| host.clone());
         if good_name && prio < *best {
             *best = prio;
@@ -164,5 +217,32 @@ fn record(out: &Mutex<BTreeMap<Ipv4Addr, (Found, usize)>>, ev: ServiceEvent) {
         {
             f.model = model.clone().or(f.model.take());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn txt_capture_filters_cleans_and_caps() {
+        let long = "x".repeat(200);
+        let t = capture_txt(|k| match k {
+            "md" => Some("  Chromecast \n Ultra ".into()),
+            "fn" => Some(long.clone()),
+            "ca" => Some(String::new()),
+            "other" => Some("nope".into()),
+            _ => None,
+        });
+        assert_eq!(t.get("md").unwrap(), "Chromecast Ultra");
+        assert_eq!(t.get("fn").unwrap().len(), 80);
+        assert!(!t.contains_key("ca") && !t.contains_key("other"));
+    }
+
+    #[test]
+    fn bare_type_strips_transport() {
+        assert_eq!(bare_type("_adb-tls-connect._tcp"), "_adb-tls-connect");
+        assert_eq!(bare_type("_matterc._udp"), "_matterc");
+        assert_eq!(bare_type("_x"), "_x");
     }
 }

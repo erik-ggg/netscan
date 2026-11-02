@@ -2,7 +2,9 @@
 
 use super::icons;
 use super::intrusion::{DecodeText, seed_for};
+use super::link::{LinkConfig, proto_name};
 use super::session::IntelSession;
+use crate::link::{self, LinkRequest, plan::Readiness, tools::Tools};
 use crate::scan::intel::ports::{self, PORTS};
 use crate::scan::model::*;
 use crate::scan::os;
@@ -94,6 +96,21 @@ fn Section(
 
 fn fmt_ms(v: f32) -> String {
     format!("{v:.1}")
+}
+
+/// `+87 TEXT` evidence line; the winner's lines are bright, the rest dim with a kind tag.
+fn ev_line(e: &Evidence, win: DeviceKind) -> Element {
+    let own = e.kind == win;
+    let tag = if own {
+        String::new()
+    } else {
+        format!("[{}] ", icons::code(e.kind).0)
+    };
+    rsx! {
+        div { class: if own { "ev cls win" } else { "ev cls" }, title: "{e.text}",
+            b { "+{e.weight}" } " {tag}{e.text}"
+        }
+    }
 }
 
 fn conf_bar(c: u8) -> Element {
@@ -197,10 +214,26 @@ pub fn Dossier(
     closing: bool,
     on_close: EventHandler<()>,
     on_rescan: EventHandler<()>,
+    network: NetworkInfo,
+    tools: Tools,
+    cfg_open: bool,
+    on_cfg: EventHandler<bool>,
+    on_connect: EventHandler<(LinkRequest, Option<String>)>,
+    on_recheck: EventHandler<()>,
 ) -> Element {
     let intel = session.intel.as_ref();
+    let lplans = link::plan::plans(&device, intel, &tools);
+    let top_plan = lplans.first().cloned();
+    let link_ready = top_plan
+        .as_ref()
+        .is_some_and(|p| p.readiness == Readiness::Ready && p.proto != link::Proto::Local);
+    let link_label = top_plan
+        .as_ref()
+        .map(|p| proto_name(p.proto))
+        .unwrap_or("LOCAL");
     let done = session.done;
     let dark = session.is_dark();
+    let cls = super::network_map::eff_class(&device, intel).cloned();
     let kind = intel.and_then(|i| i.kind).unwrap_or(device.kind);
     let (kcode, kjp) = icons::code(kind);
     let og = match intel {
@@ -327,6 +360,16 @@ pub fn Dossier(
     let probes = http.len() + banners.len();
     let reclass_txt = intel.and_then(|i| i.kind_reason.clone());
     let reclassified = intel.is_some_and(|i| i.kind.is_some_and(|k| k != device.kind));
+    let tip = cls
+        .as_ref()
+        .map(|c| {
+            c.evidence
+                .iter()
+                .map(|e| format!("+{} {}", e.weight, e.text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
     let hex_rows = 40;
     let logtxt = session
         .log
@@ -352,6 +395,7 @@ pub fn Dossier(
                     span { class: "dz-title", DecodeText { text: "TARGET PROFILE".to_string(), ms: 480 } " " span { class: "jp", "標的記録" } }
                     span { class: "dz-ip", "{device.ip}" }
                     span { class: "dz-scan", "SCAN {secs}" }
+                    if link_ready { button { class: "dz-chip", onclick: move |_| on_cfg.call(true), span { class: "dot" } "LINK READY \u{25B8} {link_label}" } }
                     span { class: "dz-status {status_cls}", span { class: "dot" } "{status_txt} " span { class: "jp", "{status_jp}" } }
                     button { class: "dz-close", onclick: move |_| on_close.call(()), "[ESC] DISCONNECT " span { class: "jp", "切断" } }
                 }
@@ -378,7 +422,17 @@ pub fn Dossier(
                     }
                     div { class: "dz-kind",
                         div { class: "dz-kcode", "{kcode} " span { class: "jp", "{kjp}" } }
-                        if reclassified {
+                        if let Some(c) = &cls {
+                            if let Some(l) = &c.label { div { class: "dz-klabel", "{l}" } }
+                            div { class: if c.confidence < super::network_map::UNCERTAIN { "dz-kconf unsure" } else { "dz-kconf" },
+                                {conf_bar(c.confidence)} b { "{c.confidence}%" }
+                                if c.confidence < super::network_map::UNCERTAIN { span { class: "q", "?" } }
+                            }
+                            div { class: "dz-reclass", title: "{tip}",
+                                if reclassified { "◂ " }
+                                "{c.reason}"
+                            }
+                        } else if reclassified {
                             div { class: "dz-reclass", "◂ RECLASSIFIED " if let Some(r) = &reclass_txt { span { "({r})" } } }
                         }
                     }
@@ -447,10 +501,20 @@ pub fn Dossier(
                                 if scanned < PORTS.len() && !done { div { class: "pl none", "SWEEPING {scanned}/{PORTS.len()}…" } }
                             }
                         }
-                        Section { n: "04", title: "OS PROFILE", jp: "基盤", pending: false, tag: if done { String::new() } else { "PRELIMINARY".into() },
-                            div { class: "os-main", b { "{og.label}" } {conf_bar(og.confidence)} span { class: "dim", "{og.confidence}%" } }
+                        Section { n: "04", title: "PROFILE", jp: "基盤", pending: false, tag: if done { String::new() } else { "PRELIMINARY".into() },
+                            div { class: "os-main", span { class: "dz-k", "OS" } b { "{og.label}" } {conf_bar(og.confidence)} span { class: "dim", "{og.confidence}%" } }
                             if og.evidence.is_empty() { div { class: "dz-empty", "NO EVIDENCE // ", span { class: "jp", "無" } } }
-                            for e in og.evidence.iter() { div { class: "ev", "· {e}" } }
+                            for e in og.evidence.iter().take(if cls.is_some() { 2 } else { 6 }) { div { class: "ev", "· {e}" } }
+                            if let Some(c) = &cls {
+                                div { class: "os-main cl", span { class: "dz-k", "CLASS" }
+                                    b { { match &c.label { Some(l) => format!("{} // {l}", c.kind.name()), None => c.kind.name().to_string() } } }
+                                    {conf_bar(c.confidence)} span { class: "dim", "{c.confidence}%" } }
+                                for e in c.evidence.iter().take(6) { {ev_line(e, c.kind)} }
+                                if !c.alt.is_empty() {
+                                    div { class: "ev alt", "ALT ▸ "
+                                        { c.alt.iter().map(|(k, p)| format!("{} {p}%", k.name())).collect::<Vec<_>>().join("  ") } }
+                                }
+                            }
                         }
                         Section { n: "09", title: "PACKET TRACE", jp: "痕跡", pending: false, class: "grow hex", tag: format!("{} B", hex_rows * 16),
                             pre { class: "hexd", "{hex}" }
@@ -504,9 +568,22 @@ pub fn Dossier(
                     span { class: "sum", "{scanned} PORTS · {samples.len()} ECHOES · {probes} PROBES" }
                     span { class: "keys",
                         if done { button { class: "dz-btn", onclick: move |_| on_rescan.call(()), "[R] RE-SCAN " span { class: "jp", "再走査" } } }
+                        button { class: if cfg_open { "dz-btn link on" } else if link_ready { "dz-btn link ready" } else { "dz-btn link" }, onclick: move |_| on_cfg.call(!cfg_open),
+                            "[C] CONNECT " span { class: "jp", "接続" } " \u{25B8} {link_label}" }
                         span { "[ESC] DISCONNECT " span { class: "jp", "切断" } }
                     }
                     span { class: "sig", "0xA5C0 // ", span { class: "jp", "荒坂" }, " SEC-OPS" }
+                }
+                if cfg_open {
+                    LinkConfig {
+                        device: device.clone(),
+                        intel: intel.cloned(),
+                        network: network.clone(),
+                        tools: tools.clone(),
+                        on_connect: move |a| on_connect.call(a),
+                        on_cancel: move |_| on_cfg.call(false),
+                        on_recheck: move |_| on_recheck.call(()),
+                    }
                 }
             }
         }

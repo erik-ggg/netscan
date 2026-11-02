@@ -8,7 +8,7 @@ pub mod risk;
 
 use super::model::*;
 use super::{classify, net, os, ssdp};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
@@ -98,9 +98,8 @@ async fn echo_stage(ip: Ipv4Addr, emit: &Emit, state: &Mutex<DeviceIntel>) {
 }
 
 async fn upnp_unicast(client: &reqwest::Client, ip: Ipv4Addr) -> Option<UpnpInfo> {
-    const MSEARCH: &str = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: upnp:rootdevice\r\n\r\n";
     let sock = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
-    sock.send_to(MSEARCH.as_bytes(), SocketAddr::new(IpAddr::V4(ip), 1900))
+    ssdp::unicast_search(&sock, ip, "upnp:rootdevice", 1)
         .await
         .ok()?;
     let mut buf = [0u8; 2048];
@@ -342,10 +341,12 @@ pub async fn deep_scan(
     stage(IntelStage::Assemble, 90);
     let mut intel = lock(&state).clone();
     intel.os = os::guess(&t.device, Some(&intel));
-    if let Some((k, why)) = classify::refine(&t.device, &intel) {
-        intel.kind = Some(k);
-        intel.kind_reason = Some(why);
+    let class = classify::assess(&t.device, Some(&intel));
+    if class.kind != t.device.kind && class.confidence >= 50 {
+        intel.kind = Some(class.kind);
+        intel.kind_reason = Some(class.reason.clone());
     }
+    intel.class = Some(class);
     let (notes, exposure) = risk::assess(&t.device, &intel);
     intel.notes = notes;
     intel.exposure = exposure;

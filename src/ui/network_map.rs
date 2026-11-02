@@ -32,6 +32,14 @@ fn pulses(a: (f64, f64), b: (f64, f64), seed: usize, rtt_ms: Option<f32>) -> Str
     )
 }
 
+/// Below this confidence a node is drawn as "uncertain".
+pub const UNCERTAIN: u8 = 50;
+
+/// Scored classification to show: the deep-scan one when present, else the sweep one.
+pub fn eff_class<'a>(d: &'a Device, intel: Option<&'a DeviceIntel>) -> Option<&'a Classification> {
+    intel.and_then(|i| i.class.as_ref()).or(d.class.as_ref())
+}
+
 /// Camera zoom on the targeted node.
 const ZOOM: f64 = 1.55;
 /// Max empty scene space the zoomed camera may reveal past the map bounds.
@@ -216,8 +224,12 @@ pub fn NetworkMap(
             ];
             (
                 "INTERNET".to_string(),
-                icons::code(DeviceKind::Internet),
+                (
+                    icons::code(DeviceKind::Internet).0.to_string(),
+                    icons::code(DeviceKind::Internet).1,
+                ),
                 rows,
+                Vec::new(),
                 false,
             )
         } else {
@@ -228,6 +240,25 @@ pub fn NetworkMap(
                 _ => "—".into(),
             };
             let os = os::guess(d, None);
+            let intel_h = sessions.get(&d.ip).and_then(|s| s.intel.as_ref());
+            let cl = eff_class(d, intel_h);
+            let kind_h = intel_h.and_then(|i| i.kind).unwrap_or(d.kind);
+            let code = icons::code(kind_h);
+            let mut code_s = code.0.to_string();
+            let mut cls_rows: Vec<(&'static str, String)> = Vec::new();
+            if let Some(c) = cl {
+                if c.confidence < UNCERTAIN {
+                    code_s.push_str(" ·?");
+                }
+                let name = match &c.label {
+                    Some(l) => format!("{} // {}", c.kind.name(), l),
+                    None => c.kind.name().to_string(),
+                };
+                cls_rows.push(("CLASS", format!("{name} {}%", c.confidence)));
+                if !c.reason.is_empty() {
+                    cls_rows.push(("WHY", trunc(&c.reason, 48)));
+                }
+            }
             let rows = vec![
                 ("IP", d.ip.clone()),
                 (
@@ -264,7 +295,7 @@ pub fn NetworkMap(
                     },
                 ),
             ];
-            (d.label(), icons::code(d.kind), rows, d.is_self)
+            (d.label(), (code_s, code.1), rows, cls_rows, d.is_self)
         }
     });
 
@@ -362,12 +393,16 @@ pub fn NetworkMap(
                             };
                             let kind = sess.and_then(|s| s.intel.as_ref()).and_then(|i| i.kind).unwrap_or(d.kind);
                             let reclass = kind != d.kind;
+                            let ncl = eff_class(d, sess.and_then(|s| s.intel.as_ref()));
+                            let unsure = ncl.is_some_and(|c| c.confidence < UNCERTAIN);
                             let chip_n = sess.map(|s| s.open_count());
                             let os_tag = (og.confidence >= 40 && og.short != "---").then(|| og.short.clone());
-                            let cls = match (d.is_self, hot == Some(idx)) {
-                                (true, true) => "node-body me on",
-                                (true, false) => "node-body me",
-                                (false, true) => "node-body on",
+                            let cls = match (d.is_self, hot == Some(idx), unsure) {
+                                (true, true, _) => "node-body me on",
+                                (true, false, _) => "node-body me",
+                                (false, true, true) => "node-body on uncertain",
+                                (false, true, false) => "node-body on",
+                                (false, false, true) => "node-body uncertain",
                                 _ => "node-body",
                             };
                             rsx! {
@@ -388,6 +423,7 @@ pub fn NetworkMap(
                                             Icon { kind, scale: 0.72 }
                                         }
                                         if let Some(n) = chip_n { Chip { n, x: 22.0, y: -22.0 } }
+                                        if unsure && !d.is_self { text { class: "unsure", x: "19", y: "26", "?" } }
                                         if d.is_self {
                                             g { class: "you", transform: "translate(0 -52)",
                                                 polygon { points: "-34,-9 30,-9 36,-3 36,9 -30,9 -36,3" }
@@ -421,13 +457,20 @@ pub fn NetworkMap(
 
             footer { class: if focused { "legend off" } else { "legend" },
                 span { class: "status", span { class: "dot" } "LINK SECURE  " span { class: "jp", "接続" } }
-                if let Some((title, (code, jp), rows, is_self)) = detail {
+                if let Some((title, (code, jp), rows, cls_rows, is_self)) = detail {
                     div { class: "readout",
                         div { class: "ro-head",
                             span { class: "ro-code", "{code}", span { class: "jp", " {jp}" } }
                             span { class: "ro-title", "{title}" }
                             if is_self { span { class: "d-you", "YOU 本機" } }
                             if !is_inet { span { class: "ro-hint", "CLICK ▸ BREACH ", span { class: "jp", "侵入" } } }
+                        }
+                        if !cls_rows.is_empty() {
+                            div { class: "ro-rows cls",
+                                for (k, v) in cls_rows.into_iter() {
+                                    span { class: "ro-cell {k.to_lowercase()}", span { class: "k", "{k}" } span { class: "v", "{v}" } }
+                                }
+                            }
                         }
                         div { class: "ro-rows",
                             for (k, v) in rows.into_iter().filter(|r| r.1 != "—") {
